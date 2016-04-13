@@ -9,7 +9,7 @@
 // @include     *://*.askubuntu.com/review*
 // @include     *://*.mathoverflow.net/review*
 // @include     *://*.stackapps.net/review*
-// @version     1.3.09
+// @version     1.4.06
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -18,13 +18,12 @@
 // @resource    icon lens.png
 // ==/UserScript==
 const HrefBlankFavicon = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
-// *** Change these intervals if desired ***
+// *** Change these millisecond intervals if desired ***
 const MsiRoundReload = 5 * 60 * 1000, MsiReloadInQueue = 15 * 1000, MsiReloadStale = 60 * 60 * 1000;
+// *** Change these navigation counts if desired ***
 const NNavLoadMeta = 60, NTotalNavRecycleTab = 500;
 
-// *** Customize this! ***
-const LDomSites = ["ell.stackexchange.com", "space.stackexchange.com", "rpg.stackexchange.com", "meta.stackexchange.com"];
-// TODO: Make configurable at runtime
+var LDomSites = GM_getValue("LDomSites", "").split(",");
 
 var NNavLoad = GM_getValue("NNavLoad", 1);
 var MsiReload = Math.max(MsiRoundReload / LDomSites.length, MsiReloadInQueue);
@@ -34,7 +33,7 @@ function BIsMotherMeta(Dom) {
   // Hack, but while MSO is busy enough, SO's review queues are flat ridiculous with this script
   return Dom == "meta.stackexchange.com" || Dom == "meta.stackoverflow.com";
 }
-var DomMain = location.hostname;
+var DomMain = location.hostname, BDomInL = LDomSites.indexOf(DomMain) > -1;
 var BMotherMeta = BIsMotherMeta(DomMain);
 var BChildMeta = !BMotherMeta && DomMain.startsWith("meta.");
 if (BChildMeta) { DomMain = DomMain.substring("meta.".length); }
@@ -129,19 +128,6 @@ if (BInQueue) {
 }
 else {
   SetFavicon(GM_getResourceURL("icon"));
-  
-  if (!BChildMeta && !BInQueue) {
-    ElemMetaLoadProgress = document.createElement("span");
-    ElemMetaLoadProgress.style.cssFloat = "right";
-    ElemMetaLoadProgress.style.marginTop = "1em";
-    ElemMetaLoadProgress.style.fontSize = "0.85em";
-    ElemMetaLoadProgress.textContent = GM_info.script.name + " v" + GM_info.script.version;
-    ElemMetaLoadProgress.textContent += "; meta load: " + NNavLoad + "/" + NNavLoadMeta;
-    if (NTotalNavRecycleTab != -1) ElemMetaLoadProgress.textContent += "; tab recycle: " + history.length + "/" + NTotalNavRecycleTab;
-    
-    // Comment out this next line to hide the note about next meta load time
-    ElemHeader.appendChild(ElemMetaLoadProgress);
-  }
 
   var NlNumAvailable = document.querySelectorAll(".dashboard-count:not(.dashboard-faded) > .dashboard-num");
   for (let NNumAvailable of NlNumAvailable) {
@@ -151,6 +137,39 @@ else {
       let NLnkAvailable = NNumAvailable.parentNode.parentNode.querySelector(".dashboard-title > a");
       //console.log("adding " + NLnkAvailable.href);
       LHrefToOpen.push(NLnkAvailable.href);
+    }
+  }
+  
+  if (!BChildMeta) {
+    ElemMetaLoadProgress = document.createElement("span");
+    ElemMetaLoadProgress.style.cssFloat = "right";
+    ElemMetaLoadProgress.style.marginTop = "1em";
+    ElemMetaLoadProgress.style.fontSize = "0.85em";
+    ElemMetaLoadProgress.textContent = GM_info.script.name + " v" + GM_info.script.version;
+    ElemMetaLoadProgress.textContent += "; meta load: " + NNavLoad + "/" + NNavLoadMeta;
+    if (NTotalNavRecycleTab != -1) ElemMetaLoadProgress.textContent += "; tab recycle: " + history.length + "/" + NTotalNavRecycleTab;
+    ElemHeader.appendChild(ElemMetaLoadProgress);
+    
+    if (!BDomInL && (NlNumAvailable.length > 0)) {
+      // If there are any enabled queues on a main site, this user has review privileges here
+      ElemMetaLoadProgress.textContent += " — site added!";
+      LDomSites.push(DomMain);
+      let SLDomSitesNew = LDomSites.join(",").replace(/^,|,,|,$/, '');
+      //console.log("Site list: '" + GM_getValue("LDomSites", "") + "' -> '" + SLDomSitesNew + "'");
+      GM_setValue("LDomSites", SLDomSitesNew);
+    }
+    else if (BDomInL && (NlNumAvailable.length == 0)) {
+      ElemMetaLoadProgress.textContent += " — site removed!";
+      let i = LDomSites.indexOf(DomMain);
+      if (i > -1) {
+        LDomSites.splice(i, 1);
+        let SLDomSitesNew = LDomSites.join(",").replace(/^,|,,|,$/, '');
+        //console.log("Site list: '" + GM_getValue("LDomSites", "") + "' -> '" + SLDomSitesNew + "'");
+        GM_setValue("LDomSites", SLDomSitesNew);
+      }
+      else {
+        console.log("Unable to find site " + DomMain + " to remove it in '" + LDomSites.join(",") + "'!");
+      }
     }
   }
 }
@@ -188,14 +207,7 @@ else if (!BChildMeta) {
   }
   
   function LoadNext() {
-    if (BPaused) {
-      //document.title = "\u258C\u258C" + TitleBase;
-    }
-    else {
-      // if (BInQueue && !confirm(document.location.href + " no longer has anything. Leave?")) {
-        // clearInterval(TmrLoad);
-        // return;
-      // }
+    if (!BPaused) {
       CheckNextPage();
     }
   }
