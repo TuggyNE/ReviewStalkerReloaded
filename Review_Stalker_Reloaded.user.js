@@ -9,7 +9,7 @@
 // @include     *://*.askubuntu.com/review*
 // @include     *://*.mathoverflow.net/review*
 // @include     *://*.stackapps.net/review*
-// @version     1.5.04
+// @version     1.5.05
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -18,6 +18,7 @@
 // @resource    icon lens.png
 // ==/UserScript==
 const HrefBlankFavicon = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+const LDomNoChildMeta = ["stackapps.net", "meta.stackexchange.com", "docs-beta.stackexchange.com"];
 const NamMain = "__RSR_MAIN__";
 // *** Change these millisecond intervals if desired ***
 const MsiRoundReload = 5 * 60 * 1000, MsiReloadInQueue = 15 * 1000, MsiReloadStale = 60 * 60 * 1000;
@@ -30,13 +31,9 @@ var NNavLoad = GM_getValue("NNavLoad", 1);
 var MsiReload = Math.max(MsiRoundReload / LDomSites.length, MsiReloadInQueue);
 
 var BInQueue = /\/review\/.+/.test(location.href);
-function BIsMotherMeta(Dom) {
-  // Hack, but while MSO is busy enough, SO's review queues are flat ridiculous with this script
-  return Dom == "meta.stackexchange.com" || Dom == "meta.stackoverflow.com";
-}
 var DomMain = location.hostname, BDomInL = LDomSites.indexOf(DomMain) > -1;
-var BMotherMeta = BIsMotherMeta(DomMain);
-var BChildMeta = !BMotherMeta && DomMain.startsWith("meta.");
+var BHasChildMeta = LDomNoChildMeta.indexOf(DomMain) === -1;
+var BChildMeta = !BHasChildMeta && DomMain.startsWith("meta.");
 if (BChildMeta) { DomMain = DomMain.substring("meta.".length); }
 
 if (1 === history.length) {
