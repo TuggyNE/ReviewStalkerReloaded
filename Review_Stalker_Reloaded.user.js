@@ -9,7 +9,7 @@
 // @include     *://*.askubuntu.com/review*
 // @include     *://*.mathoverflow.net/review*
 // @include     *://*.stackapps.net/review*
-// @version     1.5.05
+// @version     1.5.06
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -33,7 +33,7 @@ var MsiReload = Math.max(MsiRoundReload / LDomSites.length, MsiReloadInQueue);
 var BInQueue = /\/review\/.+/.test(location.href);
 var DomMain = location.hostname, BDomInL = LDomSites.indexOf(DomMain) > -1;
 var BHasChildMeta = LDomNoChildMeta.indexOf(DomMain) === -1;
-var BChildMeta = !BHasChildMeta && DomMain.startsWith("meta.");
+var BChildMeta = BHasChildMeta && DomMain.startsWith("meta.");
 if (BChildMeta) { DomMain = DomMain.substring("meta.".length); }
 
 if (1 === history.length) {
@@ -249,7 +249,7 @@ else if (!BChildMeta) {
   setInterval(TryLoadNext, BInQueue ? MsiReloadInQueue : MsiReload);
 }
 if (BChildMeta && !BInQueue) {
-  //console.log("Loading main");
+  console.log("Loading main for '" + DomMain + "'");
   CheckNextPage();
 }
  
