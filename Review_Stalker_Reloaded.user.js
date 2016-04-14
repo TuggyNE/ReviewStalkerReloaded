@@ -9,7 +9,7 @@
 // @include     *://*.askubuntu.com/review*
 // @include     *://*.mathoverflow.net/review*
 // @include     *://*.stackapps.net/review*
-// @version     1.4.06
+// @version     1.4.07
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -170,6 +170,12 @@ else {
       else {
         console.log("Unable to find site " + DomMain + " to remove it in '" + LDomSites.join(",") + "'!");
       }
+    }
+    else if (!BDomInL) {
+      // No review access, evidently, so clear things out just to be sure and don't display any header
+      //console.log("Site list: '" + LDomSites + "'");
+      LHrefToOpen = [];
+      ElemHeader.removeChild(ElemMetaLoadProgress);
     }
   }
 }
