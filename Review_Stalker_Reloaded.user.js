@@ -9,7 +9,7 @@
 // @include     *://*.askubuntu.com/review*
 // @include     *://*.mathoverflow.net/review*
 // @include     *://*.stackapps.net/review*
-// @version     1.5.03
+// @version     1.5.04
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -18,6 +18,7 @@
 // @resource    icon lens.png
 // ==/UserScript==
 const HrefBlankFavicon = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+const NamMain = "__RSR_MAIN__";
 // *** Change these millisecond intervals if desired ***
 const MsiRoundReload = 5 * 60 * 1000, MsiReloadInQueue = 15 * 1000, MsiReloadStale = 60 * 60 * 1000;
 // *** Change these navigation counts if desired ***
@@ -38,7 +39,9 @@ var BMotherMeta = BIsMotherMeta(DomMain);
 var BChildMeta = !BMotherMeta && DomMain.startsWith("meta.");
 if (BChildMeta) { DomMain = DomMain.substring("meta.".length); }
 
-
+if (1 === history.length) {
+  window.name = NamMain;
+}
 function CheckNextPage() {
   var BRecycleTab = history.length >= NTotalNavRecycleTab && NTotalNavRecycleTab != -1;
   var i = LDomSites.indexOf(DomMain) + 1, DomNext = LDomSites[i % LDomSites.length];
@@ -52,7 +55,11 @@ function CheckNextPage() {
   var HrefNext = location.protocol + "//" + DomNext + "/review";
   console.log("Next page is " + HrefNext + " at " + NNavLoad + "/" + NNavLoadMeta);
   
-  if (BRecycleTab) {
+  if (NamMain !== window.name) {
+    // Disposable window
+    window.close();
+  }
+  else if (BRecycleTab) {
     GM_openInTab(HrefNext);
     window.close();
   }
