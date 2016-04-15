@@ -9,7 +9,7 @@
 // @include     *://*.askubuntu.com/review*
 // @include     *://*.mathoverflow.net/review*
 // @include     *://*.stackapps.net/review*
-// @version     1.5.06
+// @version     1.5.07
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -35,10 +35,6 @@ var DomMain = location.hostname, BDomInL = LDomSites.indexOf(DomMain) > -1;
 var BHasChildMeta = LDomNoChildMeta.indexOf(DomMain) === -1;
 var BChildMeta = BHasChildMeta && DomMain.startsWith("meta.");
 if (BChildMeta) { DomMain = DomMain.substring("meta.".length); }
-
-if (1 === history.length) {
-  window.name = NamMain;
-}
 function CheckNextPage() {
   var BRecycleTab = history.length >= NTotalNavRecycleTab && NTotalNavRecycleTab != -1;
   var i = LDomSites.indexOf(DomMain) + 1, DomNext = LDomSites[i % LDomSites.length];
@@ -198,6 +194,10 @@ if (BInQueue) {
   TmrQueueStatus = setInterval(CheckQueueStatus, 0.25 * 1000);
 }
 else {
+  if (1 === history.length) {
+    window.name = NamMain;
+  }
+  
   SetFavicon(GM_getResourceURL("icon"));
   LHrefToOpen = GetLHrefToOpen();
   var ElemHeader = document.querySelector(".subheader.tools-rev"), ElemMetaLoadProgress;
