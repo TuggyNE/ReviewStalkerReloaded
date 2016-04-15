@@ -9,7 +9,7 @@
 // @include     *://*.askubuntu.com/review*
 // @include     *://*.mathoverflow.net/review*
 // @include     *://*.stackapps.net/review*
-// @version     1.5.07
+// @version     1.5.08
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -19,7 +19,7 @@
 // ==/UserScript==
 const HrefBlankFavicon = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
 const LDomNoChildMeta = ["stackapps.net", "meta.stackexchange.com", "docs-beta.stackexchange.com"];
-const NamMain = "__RSR_MAIN__";
+const NamTempBase = "__RSR_TEMP__";
 // *** Change these millisecond intervals if desired ***
 const MsiRoundReload = 5 * 60 * 1000, MsiReloadInQueue = 15 * 1000, MsiReloadStale = 60 * 60 * 1000;
 // *** Change these navigation counts if desired ***
@@ -48,8 +48,7 @@ function CheckNextPage() {
   var HrefNext = location.protocol + "//" + DomNext + "/review";
   console.log("Next page is " + HrefNext + " at " + NNavLoad + "/" + NNavLoadMeta);
   
-  if (NamMain !== window.name) {
-    // Disposable window
+  if (window.name.startsWith(NamTempBase)) {
     window.close();
   }
   else if (BRecycleTab) {
@@ -190,14 +189,14 @@ function CheckSiteMembership(NQueueAvailable, ElemContainer, ElemStatus) {
 
 var LHrefToOpen = [];
 if (BInQueue) {
+  if (1 === history.length) {
+    window.name = NamTempBase + Math.round(Math.random() * 1000);
+  }
+  
   TitleBase = document.title.replace(/^Review /, "");
   TmrQueueStatus = setInterval(CheckQueueStatus, 0.25 * 1000);
 }
 else {
-  if (1 === history.length) {
-    window.name = NamMain;
-  }
-  
   SetFavicon(GM_getResourceURL("icon"));
   LHrefToOpen = GetLHrefToOpen();
   var ElemHeader = document.querySelector(".subheader.tools-rev"), ElemMetaLoadProgress;
