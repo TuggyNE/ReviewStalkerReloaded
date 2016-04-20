@@ -9,7 +9,7 @@
 // @include     *://*.askubuntu.com/review*
 // @include     *://*.mathoverflow.net/review*
 // @include     *://*.stackapps.net/review*
-// @version     1.5.08
+// @version     1.5.12
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -23,7 +23,7 @@ const NamTempBase = "__RSR_TEMP__";
 // *** Change these millisecond intervals if desired ***
 const MsiRoundReload = 5 * 60 * 1000, MsiReloadInQueue = 15 * 1000, MsiReloadStale = 60 * 60 * 1000;
 // *** Change these navigation counts if desired ***
-const NNavLoadMeta = 60, NTotalNavRecycleTab = 500;
+const NNavLoadMeta = 12, NTotalNavRecycleTab = 500;
 
 var LDomSites = GM_getValue("LDomSites", "").split(",");
 
@@ -32,8 +32,10 @@ var MsiReload = Math.max(MsiRoundReload / LDomSites.length, MsiReloadInQueue);
 
 var BInQueue = /\/review\/.+/.test(location.href);
 var DomMain = location.hostname, BDomInL = LDomSites.indexOf(DomMain) > -1;
-var BHasChildMeta = LDomNoChildMeta.indexOf(DomMain) === -1;
-var BChildMeta = BHasChildMeta && DomMain.startsWith("meta.");
+function BHasChildMeta(Dom) {
+  return LDomNoChildMeta.indexOf(Dom) === -1;
+}
+var BChildMeta = BHasChildMeta(DomMain) && DomMain.startsWith("meta.");
 if (BChildMeta) { DomMain = DomMain.substring("meta.".length); }
 function CheckNextPage() {
   var BRecycleTab = history.length >= NTotalNavRecycleTab && NTotalNavRecycleTab != -1;
@@ -42,11 +44,11 @@ function CheckNextPage() {
     NNavLoad = (NNavLoad % NNavLoadMeta) + 1;
     GM_setValue("NNavLoad", NNavLoad);
   }
-  if (NNavLoad >= NNavLoadMeta && !BIsMotherMeta(DomNext)) {
+  if (NNavLoad >= NNavLoadMeta && BHasChildMeta(DomNext)) {
     DomNext = "meta." + DomNext;
   }
   var HrefNext = location.protocol + "//" + DomNext + "/review";
-  console.log("Next page is " + HrefNext + " at " + NNavLoad + "/" + NNavLoadMeta);
+  //console.log("Next page is " + HrefNext + " at " + NNavLoad + "/" + NNavLoadMeta);
   
   if (window.name.startsWith(NamTempBase)) {
     window.close();
@@ -108,7 +110,6 @@ function CheckQueueStatus() {
       SetFavicon(HrefBlankFavicon);
       BPaused = false;
       clearInterval(TmrQueueStatus);
-      //console.log("Unpausing because " + document.location.href + " is empty.");
     }
     else if ((new Date()).valueOf() - DtFirstLoaded.valueOf() < MsiReloadStale) {
       document.title = "🔎 " + TitleBase;
@@ -127,10 +128,8 @@ function GetLHrefToOpen() {
   var LHref = [];
   for (let NNumAvailable of NlNumAvailable) {
     let SNumAvailable = NNumAvailable.title;
-    //console.log(SNumAvailable);
     if (Number.parseInt(SNumAvailable) > 0) {
       let NLnkAvailable = NNumAvailable.parentNode.parentNode.querySelector(".dashboard-title > a");
-      //console.log("adding " + NLnkAvailable.href);
       LHref.push(NLnkAvailable.href);
     }
   }
@@ -154,22 +153,20 @@ function AddSite(Dom) {
   if (BDomInL) return false;
   LDomSites.push(Dom);
   let SLDomSitesNew = LDomSites.join(",").replace(/^,|,,|,$/, '');
-  //console.log("Site list: '" + GM_getValue("LDomSites", "") + "' -> '" + SLDomSitesNew + "'");
   GM_setValue("LDomSites", SLDomSitesNew);
   return true;
 }
 function RemoveSite(Dom) {
   if (!BDomInL) return false;
-  let i = LDomSites.indexOf(DomMain);
+  let i = LDomSites.indexOf(Dom);
   if (i > -1) {
     LDomSites.splice(i, 1);
     let SLDomSitesNew = LDomSites.join(",").replace(/^,|,,|,$/, '');
-    //console.log("Site list: '" + GM_getValue("LDomSites", "") + "' -> '" + SLDomSitesNew + "'");
     GM_setValue("LDomSites", SLDomSitesNew);
     return true;
   }
   else {
-    console.log("Unable to find site " + DomMain + " to remove it in '" + LDomSites.join(",") + "'!");
+    console.log("Unable to find site " + Dom + " to remove it in '" + LDomSites.join(",") + "'!");
     return false;
   }
 }
@@ -181,7 +178,6 @@ function CheckSiteMembership(NQueueAvailable, ElemContainer, ElemStatus) {
     ElemStatus.textContent += " — site removed!";
   }
   else if (!BDomInL) {
-    //console.log("Site list: '" + LDomSites + "'");
     ElemContainer.removeChild(ElemStatus);
     BPaused = true;
   }
@@ -216,7 +212,7 @@ function AddPauseButton(ElemContainer, ElemMarker) {
   ElemPause.textContent = "Pause";
   
   ElemPause.addEventListener("click", function (e) {
-      ElemPause.textContent = BPaused ? "Pause" : "Resume"
+      ElemPause.textContent = BPaused ? "Pause" : "Resume";
       BPaused = !BPaused;
       if (e) e.preventDefault();
       return false;
@@ -224,23 +220,20 @@ function AddPauseButton(ElemContainer, ElemMarker) {
   
   ElemContainer.insertBefore(ElemPause, ElemMarker);
 }
-//console.log("MS: %d; Last: %d; %d | %d", (new Date()).valueOf(), MstLastMetaLoad, MstLastMetaLoad + MsiMetaLoad, (new Date()).valueOf() + MsiReload);
 if (LHrefToOpen.length > 0) {
   for (let i = BChildMeta ? 0 : 1; i < LHrefToOpen.length; i++) {
     GM_openInTab(LHrefToOpen[i]);
   }
   if (!BChildMeta) {
-    //console.log("navigating to " + LHrefToOpen[0]);
     location.href = LHrefToOpen[0];
   }
 }
 else if (!BChildMeta) {
-  //console.log("Setting reload timeout");
   if (!BInQueue) {
     AddPauseButton(ElemHeader, ElemMetaLoadProgress);
   }
   
-  function TryLoadNext() {
+  let TryLoadNext = function() {
     if (!BPaused) {
       CheckNextPage();
     }
@@ -248,7 +241,6 @@ else if (!BChildMeta) {
   setInterval(TryLoadNext, BInQueue ? MsiReloadInQueue : MsiReload);
 }
 if (BChildMeta && !BInQueue) {
-  console.log("Loading main for '" + DomMain + "'");
   CheckNextPage();
 }
  
