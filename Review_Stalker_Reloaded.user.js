@@ -9,7 +9,7 @@
 // @include     *://*.askubuntu.com/review*
 // @include     *://*.mathoverflow.net/review*
 // @include     *://*.stackapps.net/review*
-// @version     1.5.12
+// @version     1.5.13
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -92,7 +92,6 @@ function CheckQueueStatus() {
   let status = document.querySelector("div.review-status");
   if (status) {
     document.title = TitleBase;
-    clearInterval(TmrQueueStatus);
     BPaused = true;
   }
   else {
@@ -109,7 +108,6 @@ function CheckQueueStatus() {
       document.title = "∅ " + TitleBase;
       SetFavicon(HrefBlankFavicon);
       BPaused = false;
-      clearInterval(TmrQueueStatus);
     }
     else if ((new Date()).valueOf() - DtFirstLoaded.valueOf() < MsiReloadStale) {
       document.title = "🔎 " + TitleBase;
@@ -228,9 +226,14 @@ if (LHrefToOpen.length > 0) {
     location.href = LHrefToOpen[0];
   }
 }
-else if (!BChildMeta) {
+else {
   if (!BInQueue) {
-    AddPauseButton(ElemHeader, ElemMetaLoadProgress);
+    if (BChildMeta) {
+      CheckNextPage();
+    }
+    else {
+      AddPauseButton(ElemHeader, ElemMetaLoadProgress);
+    }
   }
   
   let TryLoadNext = function() {
@@ -239,8 +242,5 @@ else if (!BChildMeta) {
     }
   }
   setInterval(TryLoadNext, BInQueue ? MsiReloadInQueue : MsiReload);
-}
-if (BChildMeta && !BInQueue) {
-  CheckNextPage();
 }
  
