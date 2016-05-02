@@ -9,7 +9,7 @@
 // @include     *://*.askubuntu.com/review*
 // @include     *://*.mathoverflow.net/review*
 // @include     *://*.stackapps.net/review*
-// @version     1.5.13
+// @version     1.5.14
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -222,7 +222,10 @@ if (LHrefToOpen.length > 0) {
   for (let i = BChildMeta ? 0 : 1; i < LHrefToOpen.length; i++) {
     GM_openInTab(LHrefToOpen[i]);
   }
-  if (!BChildMeta) {
+  if (BChildMeta) {
+    CheckNextPage();
+  }
+  else {
     location.href = LHrefToOpen[0];
   }
 }
