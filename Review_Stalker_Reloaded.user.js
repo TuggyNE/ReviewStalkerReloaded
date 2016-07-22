@@ -9,7 +9,7 @@
 // @include     *://*.askubuntu.com/review*
 // @include     *://*.mathoverflow.net/review*
 // @include     *://*.stackapps.net/review*
-// @version     1.5.14
+// @version     1.5.15
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -18,12 +18,15 @@
 // @resource    icon lens.png
 // ==/UserScript==
 const HrefBlankFavicon = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
-const LDomNoChildMeta = ["stackapps.net", "meta.stackexchange.com", "docs-beta.stackexchange.com"];
+const LDomNoChildMeta = ["stackapps.net", "meta.stackexchange.com"];
 const NamTempBase = "__RSR_TEMP__";
 // *** Change these millisecond intervals if desired ***
 const MsiRoundReload = 5 * 60 * 1000, MsiReloadInQueue = 15 * 1000, MsiReloadStale = 60 * 60 * 1000;
 // *** Change these navigation counts if desired ***
 const NNavLoadMeta = 12, NTotalNavRecycleTab = 500;
+
+// Special-purpose for those beta users
+const DomAutoRemoveSource = "docs-beta.stackexchange.com", DomAutoRemoveDest = "stackoverflow.com";
 
 var LDomSites = GM_getValue("LDomSites", "").split(",");
 
@@ -169,6 +172,9 @@ function RemoveSite(Dom) {
   }
 }
 function CheckSiteMembership(NQueueAvailable, ElemContainer, ElemStatus) {
+  if (DomMain === DomAutoRemoveDest && RemoveSite(DomAutoRemoveSource, ElemContainer)) {
+    ElemStatus.textContent += " — site removed!";
+  } else
   if (NQueueAvailable > 0 && AddSite(DomMain, ElemContainer)) {
     ElemStatus.textContent += " — site added!";
   }
