@@ -2,14 +2,14 @@
 // @name        Review Stalker Reloaded
 // @namespace   com.tuggy.nathan
 // @description Reloads specified Stack Exchange review pages, opening tasks as they show up
-// @match       *://*.stackexchange.com/review*
-// @include     *://*.stackoverflow.com/review*
-// @include     *://*.serverfault.com/review*
-// @include     *://*.superuser.com/review*
-// @include     *://*.askubuntu.com/review*
-// @include     *://*.mathoverflow.net/review*
-// @include     *://*.stackapps.net/review*
-// @version     1.5.15
+// @include     *://*.stackexchange.com/review*
+// @include     /^https?://[^\.]*\.?stackoverflow\.com/review/
+// @include     /^https?://[^\.]*\.?serverfault\.com/review/
+// @include     /^https?://[^\.]*\.?superuser\.com/review/
+// @include     /^https?://[^\.]*\.?askubuntu\.com/review/
+// @include     /^https?://[^\.]*\.?mathoverflow\.net/review/
+// @include     *://stackapps.net/review/*
+// @version     1.5.22
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -18,20 +18,20 @@
 // @resource    icon lens.png
 // ==/UserScript==
 const HrefBlankFavicon = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
-const LDomNoChildMeta = ["stackapps.net", "meta.stackexchange.com"];
+const LDomNoChildMeta = ["stackapps.net", "meta.stackexchange.com", "stackoverflow.com", "meta.stackoverflow.com"];
 const NamTempBase = "__RSR_TEMP__";
 // *** Change these millisecond intervals if desired ***
 const MsiRoundReload = 5 * 60 * 1000, MsiReloadInQueue = 15 * 1000, MsiReloadStale = 60 * 60 * 1000;
 // *** Change these navigation counts if desired ***
 const NNavLoadMeta = 12, NTotalNavRecycleTab = 500;
 
-// Special-purpose for those beta users
-const DomAutoRemoveSource = "docs-beta.stackexchange.com", DomAutoRemoveDest = "stackoverflow.com";
-
 var LDomSites = GM_getValue("LDomSites", "").split(",");
 
 var NNavLoad = GM_getValue("NNavLoad", 1);
 var MsiReload = Math.max(MsiRoundReload / LDomSites.length, MsiReloadInQueue);
+
+var DomLoadStarted = GM_getValue("DomLoadStarted", "");
+GM_setValue("DomLoadStarted", "");          // Should be empty most of the time
 
 var BInQueue = /\/review\/.+/.test(location.href);
 var DomMain = location.hostname, BDomInL = LDomSites.indexOf(DomMain) > -1;
@@ -43,6 +43,14 @@ if (BChildMeta) { DomMain = DomMain.substring("meta.".length); }
 function CheckNextPage() {
   var BRecycleTab = history.length >= NTotalNavRecycleTab && NTotalNavRecycleTab != -1;
   var i = LDomSites.indexOf(DomMain) + 1, DomNext = LDomSites[i % LDomSites.length];
+  if (window.name.startsWith(NamTempBase)) {
+    window.close();
+    return;
+  }
+  if (LDomSites.length === 0) {
+    // Nowhere to go
+    return;
+  }
   if (i >= LDomSites.length) {
     NNavLoad = (NNavLoad % NNavLoadMeta) + 1;
     GM_setValue("NNavLoad", NNavLoad);
@@ -53,14 +61,13 @@ function CheckNextPage() {
   var HrefNext = location.protocol + "//" + DomNext + "/review";
   //console.log("Next page is " + HrefNext + " at " + NNavLoad + "/" + NNavLoadMeta);
   
-  if (window.name.startsWith(NamTempBase)) {
-    window.close();
-  }
-  else if (BRecycleTab) {
+  if (BRecycleTab) {
+    GM_setValue("DomLoadStarted", DomMain);
     GM_openInTab(HrefNext);
     window.close();
   }
   else {
+    GM_setValue("DomLoadStarted", DomMain);
     location.assign(HrefNext);
   }
 }
@@ -137,8 +144,9 @@ function GetLHrefToOpen() {
   return LHref;
 }
 
+var ElemHeader, ElemMetaLoadProgress;
 function CreateElemMetaLoadProgress() {
-  var ElemMetaLoadProgress = document.createElement("span");
+  ElemMetaLoadProgress = document.createElement("span");
   
   ElemMetaLoadProgress.style.cssFloat = "right";
   ElemMetaLoadProgress.style.marginTop = "1em";
@@ -147,13 +155,15 @@ function CreateElemMetaLoadProgress() {
   ElemMetaLoadProgress.textContent += "; meta load: " + NNavLoad + "/" + NNavLoadMeta;
   if (NTotalNavRecycleTab != -1) ElemMetaLoadProgress.textContent += "; tab recycle: " + history.length + "/" + NTotalNavRecycleTab;
   
-  return ElemMetaLoadProgress;
+  ElemHeader = document.querySelector(".subheader.tools-rev");
+  ElemHeader.appendChild(ElemMetaLoadProgress);
 }
 
 function AddSite(Dom) {
   if (BDomInL) return false;
   LDomSites.push(Dom);
-  let SLDomSitesNew = LDomSites.join(",").replace(/^,|,,|,$/, '');
+  if (!LDomSites[0]) LDomSites = LDomSites.slice(1)
+  let SLDomSitesNew = LDomSites.join(",");
   GM_setValue("LDomSites", SLDomSitesNew);
   return true;
 }
@@ -172,13 +182,15 @@ function RemoveSite(Dom) {
   }
 }
 function CheckSiteMembership(NQueueAvailable, ElemContainer, ElemStatus) {
-  if (DomMain === DomAutoRemoveDest && RemoveSite(DomAutoRemoveSource, ElemContainer)) {
-    ElemStatus.textContent += " — site removed!";
+  if (DomLoadStarted && DomMain != DomLoadStarted && RemoveSite(DomLoadStarted)) {
+    // We didn't end up where we wanted, probably because it's gone
+    ElemStatus.textContent += " — " + DomLoadStarted + " missing!";
+    BPaused = true;
   } else
-  if (NQueueAvailable > 0 && AddSite(DomMain, ElemContainer)) {
+  if (NQueueAvailable > 0 && AddSite(DomMain)) {
     ElemStatus.textContent += " — site added!";
   }
-  else if (0 === NQueueAvailable && RemoveSite(DomMain, ElemContainer)) {
+  else if (0 === NQueueAvailable && RemoveSite(DomMain)) {
     ElemStatus.textContent += " — site removed!";
   }
   else if (!BDomInL) {
@@ -199,10 +211,8 @@ if (BInQueue) {
 else {
   SetFavicon(GM_getResourceURL("icon"));
   LHrefToOpen = GetLHrefToOpen();
-  var ElemHeader = document.querySelector(".subheader.tools-rev"), ElemMetaLoadProgress;
   if (!BChildMeta) {
-    ElemMetaLoadProgress = CreateElemMetaLoadProgress();
-    ElemHeader.appendChild(ElemMetaLoadProgress);
+    CreateElemMetaLoadProgress();
     CheckSiteMembership(NlNumAvailable.length, ElemHeader, ElemMetaLoadProgress);
   }
 }
@@ -213,16 +223,15 @@ function AddPauseButton(ElemContainer, ElemMarker) {
   ElemPause.style.cssFloat = "right";
   ElemPause.style.marginTop = "1em";
   ElemPause.style.marginLeft = "1em";
-  ElemPause.textContent = "Pause";
+  ElemPause.textContent = BPaused ? "Resume" : "Pause";
   
   ElemPause.addEventListener("click", function (e) {
-      ElemPause.textContent = BPaused ? "Pause" : "Resume";
       BPaused = !BPaused;
+      ElemPause.textContent = BPaused ? "Resume" : "Pause";
       if (e) e.preventDefault();
       return false;
     });
-  
-  ElemContainer.insertBefore(ElemPause, ElemMarker);
+  if (ElemMarker.parentNode) ElemMarker.parentNode.insertBefore(ElemPause, ElemMarker);
 }
 if (LHrefToOpen.length > 0) {
   for (let i = BChildMeta ? 0 : 1; i < LHrefToOpen.length; i++) {
