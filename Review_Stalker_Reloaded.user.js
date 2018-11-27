@@ -3,14 +3,15 @@
 // @namespace   com.tuggy.nathan
 // @description Reloads specified Stack Exchange review pages, opening tasks as they show up
 // @include     https://*.stackexchange.com/review*
-// @include     /^https://[^/]*\.?stackoverflow\.com/review/
+// @include     /^https://[^\.]*\.?stackoverflow\.com/review/
 // @include     /^https://[^\.]*\.?serverfault\.com/review/
 // @include     /^https://[^\.]*\.?superuser\.com/review/
 // @include     /^https://[^\.]*\.?askubuntu\.com/review/
 // @include     /^https://[^\.]*\.?mathoverflow\.net/review/
 // @include     https://stackapps.net/review/*
 // @exclude     //stats$/
-// @version     1.8.52
+// @exclude     //history($|\?.+$)/
+// @version     1.8.69
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -59,8 +60,9 @@ GM_config.init({
     },
     NTotalNavRecycleTab: {
       label: "Number of pages in tab history before recycling the tab",
-      type: 'unsigned int',
-      default: 500
+      type: 'int',
+      default: 500,
+      title: "Set to -1 to disable feature"
     },
     ModeTabForQueue: {
       label: "Open all queues in new tabs without reusing current one",
@@ -119,7 +121,7 @@ GM_config.init({
     open: function(doc, win, fra) {
       BPaused = true;
       GM_config.fields.ModeTabForQueue.node.disabled = !!GM_config.get('BForceSingleTab');
-
+      
       GM_config.fields.UnvalLQueueIgnore.node.addEventListener('change', function () {
         var UnvalLQueueIgnore = GM_config.fields.UnvalLQueueIgnore.toValue();
 
@@ -129,7 +131,7 @@ GM_config.init({
           GM_config.fields.ValLQueueIgnore.node.value = UnvalLQueueIgnore;
         } else alert('List of review queues to ignore is invalid!');
       }, false);
-
+      
       GM_config.fields.BForceSingleTab.node.addEventListener('change', function () {
         GM_config.fields.ModeTabForQueue.node.disabled = !!GM_config.fields.BForceSingleTab.toValue();
       }, false);
@@ -148,16 +150,19 @@ var NNavLoadMeta = GM_config.get("NNavLoadMeta"),
     ValLQueueIgnore = GM_config.get("ValLQueueIgnore").split(/,\s*/);
 
 (function () {
-  if (!document.querySelectorAll("link[rel='stylesheet'][href$='font-awesome.min.css']").length) {
+  if (!document.querySelectorAll("link[rel='stylesheet'][href^='https://use.fontawesome.com/releases/']").length) {
     let ElemFALink = document.createElement("link");
     ElemFALink.rel = "stylesheet";
-    ElemFALink.href = "https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css";
+    ElemFALink.href = "https://use.fontawesome.com/releases/v5.1.0/css/all.css";
     document.head.appendChild(ElemFALink);
   }
 })();
 GM_addStyle(".RSR_header { float: right; margin-top: 1em; margin-left: 1em; } .sr-only { display: none; }");
 
 var NNavLoad = GM_getValue("NNavLoad", 1);
+
+var ElemSystemMessage = document.getElementById('system-message');
+var BSiteReadOnly = ElemSystemMessage && ElemSystemMessage.textContent.contains('read-only');
 
 var DomLoadStarted = GM_getValue("DomLoadStarted", "");
 GM_setValue("DomLoadStarted", "");          // Should be empty most of the time
@@ -246,9 +251,6 @@ function BuildChildMeta(DomMain) {
   if (DomMain.endsWith(".stackexchange.com")) {
     return DomMain.replace(".stackexchange.com", ".meta.stackexchange.com");
   }
-  else if (DomMain.endsWith(".stackoverflow.com")) {
-    return DomMain.replace(".stackoverflow.com", ".meta.stackoverflow.com");
-  }
   else {
     return "meta." + DomMain;
   }
@@ -264,7 +266,7 @@ function CheckNextPage() {
     // Nowhere to go
     return;
   }
-
+  
   var HrefNext;
   if (BStackPresent(SttFetch)) {        // Doesn't check BForceSingleTab, as it may have changed under us but we still need to get rid of these
     HrefNext = PeekStHref(SttFetch);
@@ -279,13 +281,13 @@ function CheckNextPage() {
       NNavLoad = (NNavLoad % NNavLoadMeta) + 1;
       GM_setValue("NNavLoad", NNavLoad);
     }
-
+    
     if (NNavLoad >= NNavLoadMeta && BHasChildMeta(DomNext)) {
       DomNext = BuildChildMeta(DomNext);
     }
     HrefNext = "https://" + DomNext + "/review";
   }
-
+  
   if (BRecycleTab && DomNext) {       // Recycling to a fetch/head stack tends to result in tab closure
     GM_setValue("DomLoadStarted", DomNext);
     GM_openInTab(HrefNext);
@@ -294,6 +296,8 @@ function CheckNextPage() {
   else {
     GM_setValue("DomLoadStarted", DomNext);
     location.assign(HrefNext);
+    // If it can't load the page in the next minute, it's probably had a network error, so recover if possible without messing up site list
+    window.setTimeout(function () { GM_setValue("DomLoadStarted", ""); }, 60 * 1000);
   }
 }
 
@@ -331,6 +335,9 @@ function BProcessed(ElemInstr) {
          BElemInstrMatches(ElemInstr, "You have already reviewed this item.") ||
          BElemInstrMatches(ElemInstr, "Your suggested edit is pending review.");
 }
+function BError() {
+  return !!document.querySelector(".error-page-text");
+}
 
 var BPaused = false, TitleBase = document.title, TmrQueueStatus, TmrHeartbeat, BDequeued = false;
 var IdCurLoaded, DtLoaded = new Date();
@@ -346,12 +353,16 @@ function MarkQueueFinished(Additional) {
 }
 function CheckQueueStatus() {
   let status = document.querySelector("div.review-status");
-  let instr = document.querySelector("span.review-instructions.infobox");
+  let instr = document.querySelector(".review-instructions.infobox");
   let ResId = /\/(\d+)$/.exec(location.href);
   if (status) {
-    MarkQueueFinished(function () { document.title = TitleBase; })
+    //alert("Found .review-status");
+    MarkQueueFinished(function () {
+      document.title = TitleBase;
+      BPaused = true;
+    })
   }
-  else if (BCapped(instr)) {
+  else if (BCapped(instr) || BError()) {
     MarkQueueFinished();
   }
   else if (BLoading()) {
@@ -372,20 +383,23 @@ function CheckQueueStatus() {
     });
   }
   else if (BStackPresent(SttFetch) && ResId) {
-    CheckNextPage();
+    if (BStackPresent(SttHead)) {
+      PokeStHref(SttHead, location.href);
+    }
     clearInterval(TmrQueueStatus);
+    CheckNextPage();
   }
   else if ((new Date()).valueOf() - DtLoaded.valueOf() < MsiReloadStale) {
     if (ResId && ResId[1] != IdCurLoaded) {
       IdCurLoaded = ResId[1];
       DtLoaded = new Date();
+      document.title = "🔎 " + TitleBase;
+      SetFavicon(HrefOriginalFavicon);
+      if (BStackPresent(SttHead)) {
+        PokeStHref(SttHead, location.href);
+      }
+      BPaused = true;
     }
-    document.title = "🔎 " + TitleBase;
-    SetFavicon(HrefOriginalFavicon);
-    if (BStackPresent(SttHead)) {
-      PokeStHref(SttHead, location.href);
-    }
-    BPaused = true;
   }
   else {
     // Let an aged-out review item go; if it comes back, that's fine
@@ -423,16 +437,19 @@ Q:for (let NNumAvailable of NlNumAvailable) {
 
 var ElemHeader, ElemOptionsButton;
 function CreateHeaderElement(NamElem, NamFA, Extra, Title) {
-  var Elem = document.createElement(NamElem);
+  var Elem = document.createElement(NamElem), ElemInner = document.createElement("span");
   Elem.className = "RSR_header";
-  Elem.innerHTML = (NamFA ? '<i class="fa fa-lg ' + NamFA + '" aria-hidden="true"></i>' : '') + Extra;
   if (Title) Elem.title = Title;
+  ElemInner.className = "fas fa-lg " + NamFA;
+  ElemInner.setAttribute('aria-hidden', 'true');
+  Elem.appendChild(ElemInner);
+  ElemInner.outerHTML += Extra;
   return Elem;
 }
 function CreateHeaders() {
   ElemHeader = document.querySelector(".subheader.tools-rev");
-
-  ElemOptionsButton = CreateHeaderElement("a", "fa-sliders", "", "Settings");
+  
+  ElemOptionsButton = CreateHeaderElement("a", "fa-sliders-h", "", "Settings");
   ElemOptionsButton.href = "#";
   ElemOptionsButton.ariaLabel = "Settings";
   ElemOptionsButton.addEventListener("click", function (e) {
@@ -441,13 +458,13 @@ function CreateHeaders() {
     return false;
   });
   ElemHeader.appendChild(ElemOptionsButton);
-
-  ElemHeader.appendChild(CreateHeaderElement("span", "fa-question-circle-o", "<span class='sr-only'>meta load:</span> " + NNavLoad + "/" + NNavLoadMeta, "Meta Load"));
-
+  
+  ElemHeader.appendChild(CreateHeaderElement("span", "fa-question-circle", "<span class='sr-only'>meta load:</span> " + NNavLoad + "/" + NNavLoadMeta, "Meta Load"));
+  
   if (NTotalNavRecycleTab != -1) {
     ElemHeader.appendChild(CreateHeaderElement("span", "fa-recycle", "<span class='sr-only'>tab recycle:</span> " + history.length + "/" + NTotalNavRecycleTab, "Tab Recycle"));
   }
-
+  
   ElemHeader.appendChild(CreateHeaderElement("span", "", GM_info.script.name + " v" + GM_info.script.version));
 }
 
@@ -491,7 +508,7 @@ function CheckSiteMembership(NQueueAvailable, ElemHeader) {
     ElemHeader.parentNode.removeChild(ElemHeader);
     BPaused = true;
   }
-
+  
   if (Status) {
     ElemHeader.appendChild(CreateHeaderElement("span", BPaused ? "fa-exclamation-triangle" : "fa-plus-square", Status));
   }
@@ -502,11 +519,11 @@ if (BInQueue) {
   if (1 === history.length) {
     window.name = NamTempBase + Math.round(Math.random() * 1000);
   }
-
+  
   TitleBase = document.title.replace(/^Review /, "");
   TmrQueueStatus = setInterval(CheckQueueStatus, MsiQueueStatus);
   TmrHeartbeat = setInterval(SetHeartbeat, MsiHeartbeat);
-
+  
   if (BForceSingleTab && BStackPresent(SttFetch)) {
     DequeueStHref(SttFetch);
     EnqueueStHref(SttHead, location.href);
@@ -517,22 +534,23 @@ else {
   LHrefToOpen = GetLHrefToOpen();
   if (NNumAll > 0) {
     CreateHeaders();
-    CheckSiteMembership(NlNumAvailable.length, ElemHeader);
+    if (!BSiteReadOnly) CheckSiteMembership(NlNumAvailable.length, ElemHeader);
   }
 }
 
 function AddPauseButton(ElemMarker) {
-  var ElemPause = CreateHeaderElement("a", "", "");
-  var Cls = function () { return "RSR_header fa fa-lg fa-" + (BPaused ? "play-circle-o" : "pause-circle-o"); };
+  var ElemPause = CreateHeaderElement("a", "pause-circle", ""), ElemPauseIcon = ElemPause.firstElementChild;
+  var Cls = function () { return "fas fa-lg fa-" + (BPaused ? "play-circle" : "pause-circle"); };
   var Aria = function () { return BPaused ? "Resume" : "Pause"; };
   ElemPause.href = "#";
-  ElemPause.className = Cls();
-  ElemPause.ariaLabel = Aria();
-
+  ElemPause.className = "RSR_header"
+  ElemPauseIcon.className = Cls();
+  ElemPauseIcon.ariaLabel = Aria();
+  
   ElemPause.addEventListener("click", function (e) {
       BPaused = !BPaused;
-      ElemPause.className = Cls();
-      ElemPause.ariaLabel = Aria();
+      ElemPauseIcon.className = Cls();
+      ElemPauseIcon.ariaLabel = Aria();
       if (e) e.preventDefault();
       return false;
     });
@@ -575,7 +593,7 @@ else {
   if (!BInQueue) {
     AddPauseButton(ElemOptionsButton);
   }
-
+  
   let TmrNav = setInterval(function() {
     if (!BPaused) {
       clearInterval(TmrNav);
@@ -583,3 +601,4 @@ else {
     }
   }, Msi());
 }
+ 
