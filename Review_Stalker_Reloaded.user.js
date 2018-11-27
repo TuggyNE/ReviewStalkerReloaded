@@ -2,44 +2,257 @@
 // @name        Review Stalker Reloaded
 // @namespace   com.tuggy.nathan
 // @description Reloads specified Stack Exchange review pages, opening tasks as they show up
-// @include     *://*.stackexchange.com/review*
-// @include     /^https?://[^\.]*\.?stackoverflow\.com/review/
-// @include     /^https?://[^\.]*\.?serverfault\.com/review/
-// @include     /^https?://[^\.]*\.?superuser\.com/review/
-// @include     /^https?://[^\.]*\.?askubuntu\.com/review/
-// @include     /^https?://[^\.]*\.?mathoverflow\.net/review/
-// @include     *://stackapps.net/review/*
-// @version     1.5.22
+// @include     https://*.stackexchange.com/review*
+// @include     /^https://[^/]*\.?stackoverflow\.com/review/
+// @include     /^https://[^\.]*\.?serverfault\.com/review/
+// @include     /^https://[^\.]*\.?superuser\.com/review/
+// @include     /^https://[^\.]*\.?askubuntu\.com/review/
+// @include     /^https://[^\.]*\.?mathoverflow\.net/review/
+// @include     https://stackapps.net/review/*
+// @exclude     //stats$/
+// @version     1.8.52
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
+// @grant       GM_listValues
 // @grant       GM_getResourceURL
+// @grant       GM_getResourceText
 // @grant       GM_info
+// @grant       GM_addStyle
 // @resource    icon lens.png
+// @resource    CSSConfig config.css
+// @require     https://openuserjs.org/src/libs/sizzle/GM_config.js
 // ==/UserScript==
 const HrefBlankFavicon = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
-const LDomNoChildMeta = ["stackapps.net", "meta.stackexchange.com", "stackoverflow.com", "meta.stackoverflow.com"];
+const LDomNoChildMeta = ["stackapps.net", "meta.stackexchange.com"];
 const NamTempBase = "__RSR_TEMP__";
-// *** Change these millisecond intervals if desired ***
-const MsiRoundReload = 5 * 60 * 1000, MsiReloadInQueue = 15 * 1000, MsiReloadStale = 60 * 60 * 1000;
-// *** Change these navigation counts if desired ***
-const NNavLoadMeta = 12, NTotalNavRecycleTab = 500;
+const MsiQueueStatus = 0.25 * 1000, MsiHeartbeat = 10 * 1000;
 
-var LDomSites = GM_getValue("LDomSites", "").split(",");
+const ModeNever = 'Never', ModeMetaOnly = 'Only on child meta sites', ModeAlways = 'Always';
+const PatQueueIgnoreEntry = /(?:(?:[^./]+\.)?(?:meta\.)?stackexchange.com|(?:[a-z]{2}\.)?(?:meta\.)?stackoverflow.com|(?:meta\.)?(?:(?:(?:[a-z]{2}\.)?stackoverflow|stackapps|askubuntu|superuser|serverfault)\.com|mathoverflow\.net))\/review\/[a-z-]+(?:,\s*(?=\S))?/g;
+
+function CommaSplit(S) {
+  if (0 === S.length) return [];
+  return S.split(",");
+}
+
+var LDomSites = CommaSplit(GM_getValue("LDomSites", "")), BDeduped = false;
+for (var i = 0; i < LDomSites.length - 1; i++) {
+  for (let j = 0; j < LDomSites.length; j++) {
+    if (j === i) continue;
+    if (LDomSites[j].replace("meta.", "") === LDomSites[i].replace("meta.", "")) {
+      LDomSites.splice(j, 1);
+      BDeduped = true;
+    }
+  }
+}
+if (BDeduped) GM_setValue("LDomSites", LDomSites.join(","));
+
+GM_config.init({
+  id: 'RSR',
+  title: "Settings for Review Stalker Reloaded",
+  fields: {
+    NNavLoadMeta: {
+      label: "Number of rounds between checking per-site meta queues",
+      type: 'unsigned int',
+      default: 12
+    },
+    NTotalNavRecycleTab: {
+      label: "Number of pages in tab history before recycling the tab",
+      type: 'unsigned int',
+      default: 500
+    },
+    ModeTabForQueue: {
+      label: "Open all queues in new tabs without reusing current one",
+      type: 'select',
+      options: [ModeNever, ModeMetaOnly, ModeAlways],
+      default: ModeMetaOnly
+    },
+    ModeSurge: {
+      label: "Check next site immediately if no reviews found",
+      type: 'select',
+      options: [ModeNever, ModeMetaOnly, ModeAlways],
+      default: ModeMetaOnly,
+      title: "Will wait at last site in rotation for full inter-round delay"
+    },
+    BForceSingleTab: {
+      label: "Load all reviews in same tab sequentially",
+      type: 'checkbox',
+      default: false,
+      title: "Fetches each queue's next item separately in background, then switches to next available queue when current is empty"
+    },
+    SiRoundReload: {
+      section: ["Intervals", "All times to millisecond precision"],
+      label: "Seconds for a full round of checks",
+      type: 'unsigned float',
+      default: 5 * 60,
+      title: "RSR will not continuously load new checks faster than the empty queue setting no matter how many sites or how small the overall time set"
+    },
+    SiReloadInQueue: {
+      label: "Seconds between checks to move on from an empty queue",
+      type: 'unsigned float',
+      default: 15
+    },
+    MiReloadStale: {
+      label: "Minutes before moving on from stale preloaded review item",
+      type: 'unsigned float',
+      default: 60
+    },
+    ValLQueueIgnore: {
+      type: 'hidden',
+      section: ['Current Sites', LDomSites.join(', ')]
+    },
+    UnvalLQueueIgnore: {
+      label: "Queues to ignore on specific sites:",
+      type: 'textarea',
+      title: "Format is '<domain>/review/<queue>' for each entry, comma separated, no HTTP/HTTPS protocol",
+      save: false
+    }
+  },
+  events: {
+    close: function() {
+      location.reload();
+    },
+    init: function() {
+      GM_config.fields.UnvalLQueueIgnore.value = GM_config.fields.ValLQueueIgnore.value;
+    },
+    open: function(doc, win, fra) {
+      BPaused = true;
+      GM_config.fields.ModeTabForQueue.node.disabled = !!GM_config.get('BForceSingleTab');
+
+      GM_config.fields.UnvalLQueueIgnore.node.addEventListener('change', function () {
+        var UnvalLQueueIgnore = GM_config.fields.UnvalLQueueIgnore.toValue();
+
+        // Only save validated
+        var leftover = UnvalLQueueIgnore.replace(PatQueueIgnoreEntry, '');
+        if (0 === leftover.length) {
+          GM_config.fields.ValLQueueIgnore.node.value = UnvalLQueueIgnore;
+        } else alert('List of review queues to ignore is invalid!');
+      }, false);
+
+      GM_config.fields.BForceSingleTab.node.addEventListener('change', function () {
+        GM_config.fields.ModeTabForQueue.node.disabled = !!GM_config.fields.BForceSingleTab.toValue();
+      }, false);
+    }
+  },
+  css: GM_getResourceText("CSSConfig")
+});
+var NNavLoadMeta = GM_config.get("NNavLoadMeta"),
+    NTotalNavRecycleTab = GM_config.get("NTotalNavRecycleTab"),
+    BTabForQueue,
+    BSurge,
+    BForceSingleTab = GM_config.get("BForceSingleTab"),
+    MsiRoundReload = GM_config.get("SiRoundReload") * 1000,
+    MsiReloadInQueue = GM_config.get("SiReloadInQueue") * 1000,
+    MsiReloadStale = GM_config.get("MiReloadStale") * 60 * 1000,
+    ValLQueueIgnore = GM_config.get("ValLQueueIgnore").split(/,\s*/);
+
+(function () {
+  if (!document.querySelectorAll("link[rel='stylesheet'][href$='font-awesome.min.css']").length) {
+    let ElemFALink = document.createElement("link");
+    ElemFALink.rel = "stylesheet";
+    ElemFALink.href = "https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css";
+    document.head.appendChild(ElemFALink);
+  }
+})();
+GM_addStyle(".RSR_header { float: right; margin-top: 1em; margin-left: 1em; } .sr-only { display: none; }");
 
 var NNavLoad = GM_getValue("NNavLoad", 1);
-var MsiReload = Math.max(MsiRoundReload / LDomSites.length, MsiReloadInQueue);
 
 var DomLoadStarted = GM_getValue("DomLoadStarted", "");
 GM_setValue("DomLoadStarted", "");          // Should be empty most of the time
 
+var StHrefQueueHead = CommaSplit(GM_getValue("StHrefQueueHead", ""));
+var StHrefQueueFetch = CommaSplit(GM_getValue("StHrefQueueFetch", ""));
+
+function QueueFromUrl(Url) {
+  var Match = /[^/]+\.[a-z]+\/review\/[^/]+/.exec(Url);
+  if (!Match) {
+    return;       // Documentation won't work, brutally ignore
+  }
+  for (let QueueIgnoreEntry of ValLQueueIgnore) {
+    if (Match[0] == QueueIgnoreEntry) {
+      return;
+    }
+  }
+  return Match[0];
+}
+
+const SttHead = 0, SttFetch = 1;
+function IdxQueueInStHref(StHref, Href) {
+  var Queue = QueueFromUrl(Href);
+  for (let i = 0; i < StHref.length; i++) {
+    let QueueExisting = QueueFromUrl(StHref[i]);
+    if (QueueExisting && Queue && QueueExisting == Queue) {
+      return i;
+    }
+  }
+}
+function EnqueueStHref(Stt, Href, BBeginning) {
+  var StHref    = SttHead === Stt ?  StHrefQueueHead  :  StHrefQueueFetch ;
+  var NamStHref = SttHead === Stt ? "StHrefQueueHead" : "StHrefQueueFetch";
+  var Queue = PatQueueIgnoreEntry.exec(Href);
+  if (IdxQueueInStHref(StHref, Href) > -1) return;
+  var ret = BBeginning ? StHref.unshift(Href) : StHref.push(Href);
+  GM_setValue(NamStHref, StHref.join(","));
+  return ret;
+}
+function DequeueStHref(Stt, BBeginning) {
+  var StHref    = SttHead === Stt ?  StHrefQueueHead  :  StHrefQueueFetch ;
+  var NamStHref = SttHead === Stt ? "StHrefQueueHead" : "StHrefQueueFetch";
+  var ret = BBeginning ? StHref.shift() : StHref.pop();
+  GM_setValue(NamStHref, StHref.join(","));
+  return ret;
+}
+function PeekStHref(Stt) {
+  var StHref = SttHead === Stt ? StHrefQueueHead : StHrefQueueFetch;
+  return StHref[StHref.length - 1];
+}
+function PokeStHref(Stt, Href, BBeginning) {
+  var StHref    = SttHead === Stt ?  StHrefQueueHead  :  StHrefQueueFetch ;
+  var NamStHref = SttHead === Stt ? "StHrefQueueHead" : "StHrefQueueFetch";
+  for (let i; (i = IdxQueueInStHref(StHref, Href)) > -1;) {
+    StHref.splice(i, 1);     // Move to whichever end is now desired to have this
+  }
+  var ret = BBeginning ? StHref.unshift(Href) : StHref.push(Href);
+  GM_setValue(NamStHref, StHref.join(","));
+  return ret;
+}
+function BStackPresent(Stt) {
+  var StHref = SttHead === Stt ? StHrefQueueHead : StHrefQueueFetch;
+  return StHref.length > 0;
+}
+
 var BInQueue = /\/review\/.+/.test(location.href);
-var DomMain = location.hostname, BDomInL = LDomSites.indexOf(DomMain) > -1;
+var DomMain = location.hostname;
 function BHasChildMeta(Dom) {
   return LDomNoChildMeta.indexOf(Dom) === -1;
 }
-var BChildMeta = BHasChildMeta(DomMain) && DomMain.startsWith("meta.");
-if (BChildMeta) { DomMain = DomMain.substring("meta.".length); }
+var BChildMeta = BHasChildMeta(DomMain) && DomMain.indexOf("meta.") > -1;
+function BuildMain(Dom) {
+  return Dom.replace("meta.", "");
+}
+if (BChildMeta) { DomMain = BuildMain(DomMain); }
+var BDomInL = LDomSites.indexOf(DomMain) > -1;
+function BFromMetaMode(Mode) {
+  if (ModeNever === Mode) return false;
+  if (ModeAlways === Mode) return true;
+  return BChildMeta;
+}
+BTabForQueue = BFromMetaMode(GM_config.get("ModeTabForQueue"));
+var BEndOfRound = LDomSites.indexOf(DomMain) >= LDomSites.length - 1;
+BSurge = BFromMetaMode(GM_config.get("ModeSurge"));
+function BuildChildMeta(DomMain) {
+  if (DomMain.endsWith(".stackexchange.com")) {
+    return DomMain.replace(".stackexchange.com", ".meta.stackexchange.com");
+  }
+  else if (DomMain.endsWith(".stackoverflow.com")) {
+    return DomMain.replace(".stackoverflow.com", ".meta.stackoverflow.com");
+  }
+  else {
+    return "meta." + DomMain;
+  }
+}
 function CheckNextPage() {
   var BRecycleTab = history.length >= NTotalNavRecycleTab && NTotalNavRecycleTab != -1;
   var i = LDomSites.indexOf(DomMain) + 1, DomNext = LDomSites[i % LDomSites.length];
@@ -51,23 +264,35 @@ function CheckNextPage() {
     // Nowhere to go
     return;
   }
-  if (i >= LDomSites.length) {
-    NNavLoad = (NNavLoad % NNavLoadMeta) + 1;
-    GM_setValue("NNavLoad", NNavLoad);
+
+  var HrefNext;
+  if (BStackPresent(SttFetch)) {        // Doesn't check BForceSingleTab, as it may have changed under us but we still need to get rid of these
+    HrefNext = PeekStHref(SttFetch);
+    DomNext = "";
   }
-  if (NNavLoad >= NNavLoadMeta && BHasChildMeta(DomNext)) {
-    DomNext = "meta." + DomNext;
+  else if (BStackPresent(SttHead)) {
+    HrefNext = PeekStHref(SttHead);
+    DomNext = "";
   }
-  var HrefNext = location.protocol + "//" + DomNext + "/review";
-  //console.log("Next page is " + HrefNext + " at " + NNavLoad + "/" + NNavLoadMeta);
-  
-  if (BRecycleTab) {
-    GM_setValue("DomLoadStarted", DomMain);
+  else {
+    if (BEndOfRound) {
+      NNavLoad = (NNavLoad % NNavLoadMeta) + 1;
+      GM_setValue("NNavLoad", NNavLoad);
+    }
+
+    if (NNavLoad >= NNavLoadMeta && BHasChildMeta(DomNext)) {
+      DomNext = BuildChildMeta(DomNext);
+    }
+    HrefNext = "https://" + DomNext + "/review";
+  }
+
+  if (BRecycleTab && DomNext) {       // Recycling to a fetch/head stack tends to result in tab closure
+    GM_setValue("DomLoadStarted", DomNext);
     GM_openInTab(HrefNext);
     window.close();
   }
   else {
-    GM_setValue("DomLoadStarted", DomMain);
+    GM_setValue("DomLoadStarted", DomNext);
     location.assign(HrefNext);
   }
 }
@@ -87,88 +312,154 @@ function SetFavicon(HrefIcon) {
   document.head.appendChild(ElemLinkIcon);
 }
 
+function BElemInstrMatches(ElemInstr, Text) {
+  return ElemInstr && ElemInstr.textContent.trim().startsWith(Text);
+}
 function BCapped(ElemInstr) {
-  return ElemInstr && ElemInstr.textContent.startsWith("Thank you for reviewing ");
+  return BElemInstrMatches(ElemInstr, "Thank you for reviewing ");
 }
 function BEmpty(ElemInstr) {
-  return ElemInstr && ElemInstr.textContent.startsWith("This queue has been cleared!");
+  return BElemInstrMatches(ElemInstr, "This queue has been cleared!") ||
+         BElemInstrMatches(ElemInstr, "There are no items for you to review, matching the filter");
 }
 function BLoading() {
   return !!document.querySelector(".review-actions .ajax-loader");
 }
+function BProcessed(ElemInstr) {
+  //alert("'" + ElemInstr.textContent + "'");
+  return BElemInstrMatches(ElemInstr, "Review completed") ||
+         BElemInstrMatches(ElemInstr, "You have already reviewed this item.") ||
+         BElemInstrMatches(ElemInstr, "Your suggested edit is pending review.");
+}
 
-var BPaused = false, TitleBase = document.title, TmrQueueStatus, DtFirstLoaded = new Date();
+var BPaused = false, TitleBase = document.title, TmrQueueStatus, TmrHeartbeat, BDequeued = false;
+var IdCurLoaded, DtLoaded = new Date();
+function MarkQueueFinished(Additional) {
+  if (BDequeued) return;
+  BDequeued = true;
+  BPaused = false;
+  if (BStackPresent(SttHead)) {
+    DequeueStHref(SttHead);
+  }
+  if (typeof Additional === "function") Additional();
+  clearInterval(TmrQueueStatus);
+}
 function CheckQueueStatus() {
   let status = document.querySelector("div.review-status");
+  let instr = document.querySelector("span.review-instructions.infobox");
+  let ResId = /\/(\d+)$/.exec(location.href);
   if (status) {
-    document.title = TitleBase;
+    MarkQueueFinished(function () { document.title = TitleBase; })
+  }
+  else if (BCapped(instr)) {
+    MarkQueueFinished();
+  }
+  else if (BLoading()) {
+    document.title = "… " + TitleBase;
+    BPaused = true;
+  }
+  else if (BEmpty(instr)) {
+    MarkQueueFinished(function() {
+      document.title = "∅ " + TitleBase;
+      SetFavicon(HrefBlankFavicon);
+    });
+  }
+  else if (BProcessed(instr)) {
+    MarkQueueFinished(function() {
+      document.title = TitleBase;
+      SetFavicon(HrefBlankFavicon);
+      BPaused = true;
+    });
+  }
+  else if (BStackPresent(SttFetch) && ResId) {
+    CheckNextPage();
+    clearInterval(TmrQueueStatus);
+  }
+  else if ((new Date()).valueOf() - DtLoaded.valueOf() < MsiReloadStale) {
+    if (ResId && ResId[1] != IdCurLoaded) {
+      IdCurLoaded = ResId[1];
+      DtLoaded = new Date();
+    }
+    document.title = "🔎 " + TitleBase;
+    SetFavicon(HrefOriginalFavicon);
+    if (BStackPresent(SttHead)) {
+      PokeStHref(SttHead, location.href);
+    }
     BPaused = true;
   }
   else {
-    let instr = document.querySelector("span.review-instructions.infobox");
-    if (BCapped(instr)) {
-      setTimeout(function () { CheckNextPage(); }, 5 * 1000);
-      clearInterval(TmrQueueStatus);
-    }
-    else if (BLoading()) {
-      document.title = "… " + TitleBase;
-      BPaused = true;
-    }
-    else if (BEmpty(instr)) {
-      document.title = "∅ " + TitleBase;
-      SetFavicon(HrefBlankFavicon);
-      BPaused = false;
-    }
-    else if ((new Date()).valueOf() - DtFirstLoaded.valueOf() < MsiReloadStale) {
-      document.title = "🔎 " + TitleBase;
-      SetFavicon(HrefOriginalFavicon);
-      BPaused = true;
-    }
-    else {
-      // Let an aged-out review item go; if it comes back, that's fine
-      BPaused = false;
-    }
+    // Let an aged-out review item go; if it comes back, that's fine
+    MarkQueueFinished(function () { while (BStackPresent(SttHead)) { DequeueStHref(SttHead); } });
   }
+}
+function SetHeartbeat() {
+  var Queue = QueueFromUrl(location.href);
+  if (!Queue) {
+    clearInterval(TmrHeartbeat);
+    return;
+  }
+  GM_setValue(Queue, (new Date()).valueOf());
 }
 
 var NlNumAvailable = document.querySelectorAll(".dashboard-count:not(.dashboard-faded) > .dashboard-num");
+var NNumAll = document.querySelectorAll(".dashboard-count > .dashboard-num").length;
 function GetLHrefToOpen() {
   var LHref = [];
-  for (let NNumAvailable of NlNumAvailable) {
+Q:for (let NNumAvailable of NlNumAvailable) {
     let SNumAvailable = NNumAvailable.title;
-    if (Number.parseInt(SNumAvailable) > 0) {
-      let NLnkAvailable = NNumAvailable.parentNode.parentNode.querySelector(".dashboard-title > a");
-      LHref.push(NLnkAvailable.href);
+    if (0 === Number.parseInt(SNumAvailable)) continue;
+    let NLnkAvailable = NNumAvailable.parentNode.parentNode.querySelector(".dashboard-title > a");
+    let Queue = QueueFromUrl(NLnkAvailable && NLnkAvailable.href);
+    if (!Queue) continue;
+    let MsaHeartbeat = new Date() - new Date(GM_getValue(Queue, 0));
+    if (MsaHeartbeat < 2 * MsiHeartbeat) continue;        // Avoid opening duplicate tab
+    if (IdxQueueInStHref(StHrefQueueHead, Queue) > -1) {  // Also ignore entries in queue head stack
+      continue Q;
     }
+    LHref.push(NLnkAvailable.href);
   }
   return LHref;
 }
 
-var ElemHeader, ElemMetaLoadProgress;
-function CreateElemMetaLoadProgress() {
-  ElemMetaLoadProgress = document.createElement("span");
-  
-  ElemMetaLoadProgress.style.cssFloat = "right";
-  ElemMetaLoadProgress.style.marginTop = "1em";
-  ElemMetaLoadProgress.style.fontSize = "0.85em";
-  ElemMetaLoadProgress.textContent = GM_info.script.name + " v" + GM_info.script.version;
-  ElemMetaLoadProgress.textContent += "; meta load: " + NNavLoad + "/" + NNavLoadMeta;
-  if (NTotalNavRecycleTab != -1) ElemMetaLoadProgress.textContent += "; tab recycle: " + history.length + "/" + NTotalNavRecycleTab;
-  
+var ElemHeader, ElemOptionsButton;
+function CreateHeaderElement(NamElem, NamFA, Extra, Title) {
+  var Elem = document.createElement(NamElem);
+  Elem.className = "RSR_header";
+  Elem.innerHTML = (NamFA ? '<i class="fa fa-lg ' + NamFA + '" aria-hidden="true"></i>' : '') + Extra;
+  if (Title) Elem.title = Title;
+  return Elem;
+}
+function CreateHeaders() {
   ElemHeader = document.querySelector(".subheader.tools-rev");
-  ElemHeader.appendChild(ElemMetaLoadProgress);
+
+  ElemOptionsButton = CreateHeaderElement("a", "fa-sliders", "", "Settings");
+  ElemOptionsButton.href = "#";
+  ElemOptionsButton.ariaLabel = "Settings";
+  ElemOptionsButton.addEventListener("click", function (e) {
+    GM_config.open();
+    if (e) e.preventDefault();
+    return false;
+  });
+  ElemHeader.appendChild(ElemOptionsButton);
+
+  ElemHeader.appendChild(CreateHeaderElement("span", "fa-question-circle-o", "<span class='sr-only'>meta load:</span> " + NNavLoad + "/" + NNavLoadMeta, "Meta Load"));
+
+  if (NTotalNavRecycleTab != -1) {
+    ElemHeader.appendChild(CreateHeaderElement("span", "fa-recycle", "<span class='sr-only'>tab recycle:</span> " + history.length + "/" + NTotalNavRecycleTab, "Tab Recycle"));
+  }
+
+  ElemHeader.appendChild(CreateHeaderElement("span", "", GM_info.script.name + " v" + GM_info.script.version));
 }
 
 function AddSite(Dom) {
-  if (BDomInL) return false;
+  if (LDomSites.indexOf(Dom) > -1) return false;
   LDomSites.push(Dom);
-  if (!LDomSites[0]) LDomSites = LDomSites.slice(1)
+  if (!LDomSites[0]) LDomSites = LDomSites.slice(1);
   let SLDomSitesNew = LDomSites.join(",");
   GM_setValue("LDomSites", SLDomSitesNew);
   return true;
 }
 function RemoveSite(Dom) {
-  if (!BDomInL) return false;
   let i = LDomSites.indexOf(Dom);
   if (i > -1) {
     LDomSites.splice(i, 1);
@@ -181,21 +472,28 @@ function RemoveSite(Dom) {
     return false;
   }
 }
-function CheckSiteMembership(NQueueAvailable, ElemContainer, ElemStatus) {
+function CheckSiteMembership(NQueueAvailable, ElemHeader) {
+  var Status;
+  if (BChildMeta) return;
   if (DomLoadStarted && DomMain != DomLoadStarted && RemoveSite(DomLoadStarted)) {
     // We didn't end up where we wanted, probably because it's gone
-    ElemStatus.textContent += " — " + DomLoadStarted + " missing!";
+    Status = DomLoadStarted + " missing!";
     BPaused = true;
-  } else
-  if (NQueueAvailable > 0 && AddSite(DomMain)) {
-    ElemStatus.textContent += " — site added!";
+  }
+  else if (NQueueAvailable > 0 && AddSite(DomMain)) {
+    Status = "site added!";
   }
   else if (0 === NQueueAvailable && RemoveSite(DomMain)) {
-    ElemStatus.textContent += " — site removed!";
+    Status = "site removed!";
+    BPaused = true;
   }
   else if (!BDomInL) {
-    ElemContainer.removeChild(ElemStatus);
+    ElemHeader.parentNode.removeChild(ElemHeader);
     BPaused = true;
+  }
+
+  if (Status) {
+    ElemHeader.appendChild(CreateHeaderElement("span", BPaused ? "fa-exclamation-triangle" : "fa-plus-square", Status));
   }
 }
 
@@ -204,40 +502,69 @@ if (BInQueue) {
   if (1 === history.length) {
     window.name = NamTempBase + Math.round(Math.random() * 1000);
   }
-  
+
   TitleBase = document.title.replace(/^Review /, "");
-  TmrQueueStatus = setInterval(CheckQueueStatus, 0.25 * 1000);
+  TmrQueueStatus = setInterval(CheckQueueStatus, MsiQueueStatus);
+  TmrHeartbeat = setInterval(SetHeartbeat, MsiHeartbeat);
+
+  if (BForceSingleTab && BStackPresent(SttFetch)) {
+    DequeueStHref(SttFetch);
+    EnqueueStHref(SttHead, location.href);
+  }
 }
 else {
   SetFavicon(GM_getResourceURL("icon"));
   LHrefToOpen = GetLHrefToOpen();
-  if (!BChildMeta) {
-    CreateElemMetaLoadProgress();
-    CheckSiteMembership(NlNumAvailable.length, ElemHeader, ElemMetaLoadProgress);
+  if (NNumAll > 0) {
+    CreateHeaders();
+    CheckSiteMembership(NlNumAvailable.length, ElemHeader);
   }
 }
 
-function AddPauseButton(ElemContainer, ElemMarker) {
-  var ElemPause = document.createElement("a");
+function AddPauseButton(ElemMarker) {
+  var ElemPause = CreateHeaderElement("a", "", "");
+  var Cls = function () { return "RSR_header fa fa-lg fa-" + (BPaused ? "play-circle-o" : "pause-circle-o"); };
+  var Aria = function () { return BPaused ? "Resume" : "Pause"; };
   ElemPause.href = "#";
-  ElemPause.style.cssFloat = "right";
-  ElemPause.style.marginTop = "1em";
-  ElemPause.style.marginLeft = "1em";
-  ElemPause.textContent = BPaused ? "Resume" : "Pause";
-  
+  ElemPause.className = Cls();
+  ElemPause.ariaLabel = Aria();
+
   ElemPause.addEventListener("click", function (e) {
       BPaused = !BPaused;
-      ElemPause.textContent = BPaused ? "Resume" : "Pause";
+      ElemPause.className = Cls();
+      ElemPause.ariaLabel = Aria();
       if (e) e.preventDefault();
       return false;
     });
   if (ElemMarker.parentNode) ElemMarker.parentNode.insertBefore(ElemPause, ElemMarker);
 }
-if (LHrefToOpen.length > 0) {
-  for (let i = BChildMeta ? 0 : 1; i < LHrefToOpen.length; i++) {
+function Msi() {
+  if (BInQueue || BStackPresent(SttFetch) || BStackPresent(SttHead) || (BSurge && !BEndOfRound)) {
+    return MsiReloadInQueue;
+  }
+  else if (BEndOfRound && BSurge) {
+    return 1;     // Yes, immediately
+  }
+  else {
+    return Math.max(MsiRoundReload / LDomSites.length, MsiReloadInQueue);
+  }
+}
+if (LHrefToOpen.length > 0 && BForceSingleTab) {
+  // TODO: Convert to function-handling?
+  StHrefQueueFetch = LHrefToOpen;
+  // Ensure LQP gets processed last so it will be the first to be handled
+  let ILQP = StHrefQueueFetch.indexOf(location.href + "/low-quality-posts");
+  if (ILQP > -1) {
+    StHrefQueueFetch.unshift(StHrefQueueFetch.splice(ILQP, 1)[0]);
+  }
+  GM_setValue("StHrefQueueFetch", StHrefQueueFetch.join(","));
+  CheckNextPage();
+}
+else if (LHrefToOpen.length > 0) {
+  for (let i = BTabForQueue ? 0 : 1; i < LHrefToOpen.length; i++) {
     GM_openInTab(LHrefToOpen[i]);
   }
-  if (BChildMeta) {
+  if (BTabForQueue) {
     CheckNextPage();
   }
   else {
@@ -246,19 +573,13 @@ if (LHrefToOpen.length > 0) {
 }
 else {
   if (!BInQueue) {
-    if (BChildMeta) {
-      CheckNextPage();
-    }
-    else {
-      AddPauseButton(ElemHeader, ElemMetaLoadProgress);
-    }
+    AddPauseButton(ElemOptionsButton);
   }
-  
-  let TryLoadNext = function() {
+
+  let TmrNav = setInterval(function() {
     if (!BPaused) {
+      clearInterval(TmrNav);
       CheckNextPage();
     }
-  }
-  setInterval(TryLoadNext, BInQueue ? MsiReloadInQueue : MsiReload);
+  }, Msi());
 }
- 
