@@ -11,7 +11,7 @@
 // @include     https://stackapps.net/review/*
 // @exclude     //stats$/
 // @exclude     //history($|\?.+$)/
-// @version     1.8.69
+// @version     1.9.00
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -355,7 +355,11 @@ function CheckQueueStatus() {
   let status = document.querySelector("div.review-status");
   let instr = document.querySelector(".review-instructions.infobox");
   let ResId = /\/(\d+)$/.exec(location.href);
-  if (status) {
+  if (!QueueFromUrl(location.href)) {
+    // Throw away ignored queues
+    MarkQueueFinished();
+  }
+  else if (status) {
     //alert("Found .review-status");
     MarkQueueFinished(function () {
       document.title = TitleBase;
