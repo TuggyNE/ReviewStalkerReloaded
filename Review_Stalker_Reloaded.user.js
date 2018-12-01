@@ -3,7 +3,7 @@
 // @namespace   com.tuggy.nathan
 // @description Reloads specified Stack Exchange review pages, opening tasks as they show up
 // @include     https://*.stackexchange.com/review*
-// @include     /^https://[^\.]*\.?stackoverflow\.com/review/
+// @include     /^https://[^/]*\.?stackoverflow\.com/review/
 // @include     /^https://[^\.]*\.?serverfault\.com/review/
 // @include     /^https://[^\.]*\.?superuser\.com/review/
 // @include     /^https://[^\.]*\.?askubuntu\.com/review/
@@ -11,7 +11,7 @@
 // @include     https://stackapps.net/review/*
 // @exclude     //stats$/
 // @exclude     //history($|\?.+$)/
-// @version     1.9.00
+// @version     1.9.01
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -250,6 +250,9 @@ BSurge = BFromMetaMode(GM_config.get("ModeSurge"));
 function BuildChildMeta(DomMain) {
   if (DomMain.endsWith(".stackexchange.com")) {
     return DomMain.replace(".stackexchange.com", ".meta.stackexchange.com");
+  }
+  else if (DomMain.endsWith(".stackoverflow.com")) {
+    return DomMain.replace(".stackoverflow.com", ".meta.stackoverflow.com");
   }
   else {
     return "meta." + DomMain;
