@@ -11,7 +11,7 @@
 // @include     https://stackapps.net/review/*
 // @exclude     //stats$/
 // @exclude     //history($|\?.+$)/
-// @version     1.9.01
+// @version     1.9.04
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -422,14 +422,14 @@ function SetHeartbeat() {
   GM_setValue(Queue, (new Date()).valueOf());
 }
 
-var NlNumAvailable = document.querySelectorAll(".dashboard-count:not(.dashboard-faded) > .dashboard-num");
-var NNumAll = document.querySelectorAll(".dashboard-count > .dashboard-num").length;
+var NlNumAvailable = document.querySelectorAll("div:not(.o30) .fs-subheading[title]");
+var NNumAll = document.querySelectorAll(".fs-subheading[title]").length;
 function GetLHrefToOpen() {
   var LHref = [];
 Q:for (let NNumAvailable of NlNumAvailable) {
     let SNumAvailable = NNumAvailable.title;
     if (0 === Number.parseInt(SNumAvailable)) continue;
-    let NLnkAvailable = NNumAvailable.parentNode.parentNode.querySelector(".dashboard-title > a");
+    let NLnkAvailable = NNumAvailable.parentNode.parentNode.querySelector(".fs-subheading > a");
     let Queue = QueueFromUrl(NLnkAvailable && NLnkAvailable.href);
     if (!Queue) continue;
     let MsaHeartbeat = new Date() - new Date(GM_getValue(Queue, 0));
@@ -454,7 +454,7 @@ function CreateHeaderElement(NamElem, NamFA, Extra, Title) {
   return Elem;
 }
 function CreateHeaders() {
-  ElemHeader = document.querySelector(".subheader.tools-rev");
+  ElemHeader = document.querySelector("#content > div:first-of-type");
   
   ElemOptionsButton = CreateHeaderElement("a", "fa-sliders-h", "", "Settings");
   ElemOptionsButton.href = "#";
@@ -464,15 +464,16 @@ function CreateHeaders() {
     if (e) e.preventDefault();
     return false;
   });
-  ElemHeader.appendChild(ElemOptionsButton);
-  
-  ElemHeader.appendChild(CreateHeaderElement("span", "fa-question-circle", "<span class='sr-only'>meta load:</span> " + NNavLoad + "/" + NNavLoadMeta, "Meta Load"));
+
+  ElemHeader.appendChild(CreateHeaderElement("span", "", GM_info.script.name + " v" + GM_info.script.version));
   
   if (NTotalNavRecycleTab != -1) {
     ElemHeader.appendChild(CreateHeaderElement("span", "fa-recycle", "<span class='sr-only'>tab recycle:</span> " + history.length + "/" + NTotalNavRecycleTab, "Tab Recycle"));
   }
   
-  ElemHeader.appendChild(CreateHeaderElement("span", "", GM_info.script.name + " v" + GM_info.script.version));
+  ElemHeader.appendChild(CreateHeaderElement("span", "fa-question-circle", "<span class='sr-only'>meta load:</span> " + NNavLoad + "/" + NNavLoadMeta, "Meta Load"));
+
+  ElemHeader.appendChild(ElemOptionsButton);
 }
 
 function AddSite(Dom) {
@@ -561,7 +562,7 @@ function AddPauseButton(ElemMarker) {
       if (e) e.preventDefault();
       return false;
     });
-  if (ElemMarker.parentNode) ElemMarker.parentNode.insertBefore(ElemPause, ElemMarker);
+  if (ElemMarker.parentNode) ElemMarker.parentNode.appendChild(ElemPause);
 }
 function Msi() {
   if (BInQueue || BStackPresent(SttFetch) || BStackPresent(SttHead) || (BSurge && !BEndOfRound)) {
