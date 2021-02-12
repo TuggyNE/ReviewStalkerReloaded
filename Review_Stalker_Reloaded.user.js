@@ -11,7 +11,7 @@
 // @include     https://stackapps.net/review/*
 // @exclude     //stats$/
 // @exclude     //history($|\?.+$)/
-// @version     1.9.04
+// @version     1.9.06
 // @grant       GM_openInTab
 // @grant       GM_getValue
 // @grant       GM_setValue
@@ -339,7 +339,9 @@ function BProcessed(ElemInstr) {
          BElemInstrMatches(ElemInstr, "Your suggested edit is pending review.");
 }
 function BError() {
-  return !!document.querySelector(".error-page-text");
+  if (document.querySelector(".error-page-text")) return true;
+  let ElemHeader = document.querySelector(".grid--cell > h1.fs-headline1");
+  return !!ElemHeader;    // TODO: Also check text?
 }
 
 var BPaused = false, TitleBase = document.title, TmrQueueStatus, TmrHeartbeat, BDequeued = false;
@@ -422,7 +424,7 @@ function SetHeartbeat() {
   GM_setValue(Queue, (new Date()).valueOf());
 }
 
-var NlNumAvailable = document.querySelectorAll("div:not(.o30) .fs-subheading[title]");
+var NlNumAvailable = document.querySelectorAll("div:not(.o30) > .fs-subheading[title]");
 var NNumAll = document.querySelectorAll(".fs-subheading[title]").length;
 function GetLHrefToOpen() {
   var LHref = [];
